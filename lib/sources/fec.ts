@@ -57,3 +57,45 @@ export async function getContributionsByEmployer(
   );
   return data.results ?? [];
 }
+
+interface FecCommitteesResponse {
+  results: Array<{ committee_id?: string; designation?: string }>;
+}
+
+/** The candidate's principal campaign committee — needed for by_employer/by_size. */
+export async function getPrincipalCommitteeId(
+  candidateId: string,
+  cycle: number,
+): Promise<string | null> {
+  const data = await fetchJson<FecCommitteesResponse>(
+    fecUrl(`/candidate/${candidateId}/committees/`, { cycle, per_page: 20 }),
+  );
+  const principal = data.results?.find((c) => c.designation === "P");
+  return principal?.committee_id ?? data.results?.[0]?.committee_id ?? null;
+}
+
+interface FecBySizeResponse {
+  results: Array<{ size?: number; total?: number }>;
+}
+
+/**
+ * Contributions bucketed by size. FEC `size` is the lower bound of each band:
+ * 0 (<$200, unitemized), 200, 500, 1000, 2000. We fold these into the
+ * small/medium/large buckets the UI uses.
+ */
+export async function getContributionsBySize(committeeId: string, cycle: number) {
+  const data = await fetchJson<FecBySizeResponse>(
+    fecUrl(`/schedules/schedule_a/by_size/`, { committee_id: committeeId, cycle }),
+  );
+  let small = 0;
+  let medium = 0;
+  let large = 0;
+  for (const r of data.results ?? []) {
+    const size = r.size ?? 0;
+    const total = r.total ?? 0;
+    if (size < 200) small += total;
+    else if (size < 1000) medium += total;
+    else large += total;
+  }
+  return { small, medium, large };
+}

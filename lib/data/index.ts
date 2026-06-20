@@ -1,11 +1,13 @@
 import { cite, type SourceCitation } from "@/lib/provenance";
+import { dbAvailable } from "@/lib/db/client";
+import * as repo from "@/lib/db/repository";
 import { liveEnabled } from "@/lib/sources/config";
 import {
   fecCandidatePageUrl,
   getCandidateTotals,
 } from "@/lib/sources/fec";
 import { usaspendingStatePageUrl } from "@/lib/sources/usaspending";
-import { SAMPLE_MEMBERS, SAMPLE_CYCLE, type RawMember } from "@/lib/fixtures/members";
+import { SAMPLE_MEMBERS, type RawMember } from "@/lib/fixtures/members";
 import type {
   Donor,
   Industry,
@@ -16,9 +18,47 @@ import type {
 
 /**
  * Single data-access facade for the money module. Pages call only this file.
- * It assembles results from sample data by default and, when ACCOUNTABILITY_LIVE=1,
- * enriches the figures from the live APIs — flipping `dataMode` to "live".
+ *
+ * When the ingestion store has been materialized (`npm run ingest`), reads come
+ * from the database — the production path. With no DB present, the app falls
+ * back to in-memory sample fixtures so it still runs with zero setup; in that
+ * fallback, ACCOUNTABILITY_LIVE=1 enriches a member's totals from the live FEC
+ * API at request time.
  */
+
+export function listPoliticians(): Politician[] {
+  if (dbAvailable()) return repo.listPoliticians();
+  return listPoliticiansFromFixtures();
+}
+
+export function getPolitician(slug: string): Politician | null {
+  if (dbAvailable()) return repo.getPolitician(slug);
+  return getPoliticianFromFixtures(slug);
+}
+
+export function searchPoliticians(query: string): Politician[] {
+  if (dbAvailable()) return repo.searchPoliticians(query);
+  return searchPoliticiansFromFixtures(query);
+}
+
+export async function getPoliticianFinance(
+  slug: string,
+): Promise<PoliticianFinance | null> {
+  if (dbAvailable()) return repo.getPoliticianFinance(slug);
+  return getPoliticianFinanceFromFixtures(slug);
+}
+
+export function getDonor(slug: string): Donor | null {
+  if (dbAvailable()) return repo.getDonor(slug);
+  return getDonorFromFixtures(slug);
+}
+
+export function getIndustry(slug: string): Industry | null {
+  if (dbAvailable()) return repo.getIndustry(slug);
+  return getIndustryFromFixtures(slug);
+}
+
+// --- Fixture-backed fallback implementations (no database) ------------------
 
 function toPolitician(m: RawMember): Politician {
   return {
@@ -36,21 +76,21 @@ function toPolitician(m: RawMember): Politician {
   };
 }
 
-export function listPoliticians(): Politician[] {
+function listPoliticiansFromFixtures(): Politician[] {
   return SAMPLE_MEMBERS.map(toPolitician).sort((a, b) =>
     a.lastName.localeCompare(b.lastName),
   );
 }
 
-export function getPolitician(slug: string): Politician | null {
+function getPoliticianFromFixtures(slug: string): Politician | null {
   const m = SAMPLE_MEMBERS.find((x) => x.slug === slug);
   return m ? toPolitician(m) : null;
 }
 
-export function searchPoliticians(query: string): Politician[] {
+function searchPoliticiansFromFixtures(query: string): Politician[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
-  return listPoliticians().filter(
+  return listPoliticiansFromFixtures().filter(
     (p) =>
       p.name.toLowerCase().includes(q) ||
       p.state.toLowerCase().includes(q) ||
@@ -58,7 +98,7 @@ export function searchPoliticians(query: string): Politician[] {
   );
 }
 
-export async function getPoliticianFinance(
+async function getPoliticianFinanceFromFixtures(
   slug: string,
 ): Promise<PoliticianFinance | null> {
   const m = SAMPLE_MEMBERS.find((x) => x.slug === slug);
@@ -125,8 +165,14 @@ export async function getPoliticianFinance(
   return base;
 }
 
-/** Aggregate sample donor records across all members into a donor profile. */
-export function getDonor(slug: string): Donor | null {
+export function donorSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getDonorFromFixtures(slug: string): Donor | null {
   const recipients: MoneyEntry[] = [];
   let name = "";
   let kind = "Donor";
@@ -153,15 +199,7 @@ export function getDonor(slug: string): Donor | null {
   };
 }
 
-export function donorSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-/** Aggregate sample industry records across all members into an industry profile. */
-export function getIndustry(slug: string): Industry | null {
+function getIndustryFromFixtures(slug: string): Industry | null {
   const topRecipients: MoneyEntry[] = [];
   const partySplit = { D: 0, R: 0, I: 0 };
   let name = "";
